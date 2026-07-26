@@ -130,9 +130,26 @@ function App() {
   const [toast, setToast] = useState(null);
   const [diskSpace, setDiskSpace] = useState({ total: 500 * 1e9, used: 250 * 1e9, free: 250 * 1e9 });
   const [currentView, setView] = useState(() => localStorage.getItem('diskvision_view') || 'table');
+  const [showFdaModal, setShowFdaModal] = useState(false);
 
   const fileInputRef = useRef(null);
   const abortSignalRef = useRef(null);
+
+  // Check Full Disk Access on launch & auto-open System Settings if missing
+  useEffect(() => {
+    async function checkFdaOnLaunch() {
+      try {
+        const hasFda = await invoke('check_full_disk_access');
+        if (!hasFda) {
+          setShowFdaModal(true);
+          await invoke('open_full_disk_access_settings');
+        }
+      } catch (err) {
+        console.error("FDA auto-check failed:", err);
+      }
+    }
+    checkFdaOnLaunch();
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('diskvision_view', currentView);
@@ -745,6 +762,59 @@ function App() {
           </div>
         )}
       </div>
+
+      {/* Full Disk Access Modal */}
+      {showFdaModal && (
+        <div className="modal-overlay" style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(8px)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div className="modal-card" style={{
+            background: 'var(--bg-card, #1e1e24)',
+            border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
+            borderRadius: '16px',
+            padding: '28px 24px',
+            maxWidth: '460px',
+            width: '100%',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+            textAlign: 'center'
+          }}>
+            <div style={{ fontSize: '36px', marginBottom: '12px' }}>🔒</div>
+            <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-main, #ffffff)', marginBottom: '8px' }}>
+              Требуется Полный доступ к диску
+            </h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted, #a0a0ab)', lineHeight: 1.5, marginBottom: '20px' }}>
+              Чтобы DiskVision мог сканировать диск за один раз <b>без всплывающих окон macOS</b>, включите тумблер напротив <b>DiskVision</b> в открывшемся окне настроек.
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <button 
+                className="sidebar-scan-btn"
+                style={{ flex: 1, padding: '10px 16px', fontSize: '13px' }}
+                onClick={() => invoke('open_full_disk_access_settings')}
+              >
+                ⚙ Открыть Настройки macOS
+              </button>
+              <button 
+                className="sidebar-scan-btn-secondary"
+                style={{ padding: '10px 16px', fontSize: '13px' }}
+                onClick={() => setShowFdaModal(false)}
+              >
+                Позже
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && <div className="toast">{toast}</div>}
