@@ -212,11 +212,25 @@ fn build_skip_set(scan_root: &str) -> HashSet<String> {
         // ── Swap / VM files ──
         skip.insert("/private/var/vm".to_string());
         
-        // ── Time Machine local snapshots ──
+        // ── Time Machine local snapshots & system caches ──
         skip.insert("/.MobileBackups".to_string());
         skip.insert("/.MobileBackups.trash".to_string());
         skip.insert("/.Spotlight-V100".to_string());
         skip.insert("/.fseventsd".to_string());
+    }
+
+    // ── TCC-sensitive system database directories (prevent macOS popup spam) ──
+    if let Some(user_dirs) = dirs::home_dir() {
+        let home = user_dirs.to_string_lossy();
+        skip.insert(format!("{}/Library/Mail", home));
+        skip.insert(format!("{}/Library/Messages", home));
+        skip.insert(format!("{}/Library/Calendars", home));
+        skip.insert(format!("{}/Library/Reminders", home));
+        skip.insert(format!("{}/Library/Safari", home));
+        skip.insert(format!("{}/Library/Application Support/AddressBook", home));
+        skip.insert(format!("{}/Library/IdentityServices", home));
+        skip.insert(format!("{}/Library/PersonalizationPortrait", home));
+        skip.insert(format!("{}/Library/Suggestions", home));
     }
     
     skip
