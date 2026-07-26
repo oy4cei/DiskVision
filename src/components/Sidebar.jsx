@@ -1,4 +1,5 @@
 import React from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { HardDrive, Folder } from '../Icons';
 import { formatSize, getCategoryColor, getCategoryDisplayName } from '../utils';
 
@@ -58,7 +59,13 @@ const Sidebar = React.memo(function Sidebar({
         <button 
           className="sidebar-scan-btn-secondary" 
           style={{ marginTop: '6px', fontSize: '11px', opacity: 0.85, gap: '4px' }}
-          onClick={() => invoke('open_full_disk_access_settings')}
+          onClick={() => {
+            try {
+              invoke('open_full_disk_access_settings');
+            } catch (err) {
+              console.error("Failed to open settings:", err);
+            }
+          }}
           title="Open macOS Settings to grant Full Disk Access"
         >
           ⚙ Full Disk Access
