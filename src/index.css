@@ -1,0 +1,131 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* ─── Background System ─── */
+  --bg-app: #0a0b0f;
+  --bg-sidebar: rgba(12, 13, 18, 0.82);
+  --bg-main: #0d0e13;
+  --bg-toolbar: rgba(14, 15, 21, 0.9);
+  --bg-surface: rgba(255, 255, 255, 0.03);
+  --bg-surface-hover: rgba(255, 255, 255, 0.055);
+  --bg-elevated: rgba(255, 255, 255, 0.07);
+
+  /* ─── Text System ─── */
+  --text-primary: #eceef4;
+  --text-secondary: #8b8fa3;
+  --text-muted: #565a6e;
+  --text-accent: #60a5fa;
+
+  /* ─── Accent Colors ─── */
+  --accent: #4f8df7;
+  --accent-light: #6ea8fc;
+  --accent-glow: rgba(79, 141, 247, 0.3);
+  --accent-gradient: linear-gradient(135deg, #4f8df7, #7c6ef5, #b06af0);
+  --accent-hover: linear-gradient(135deg, #6ea8fc, #9b8aff, #c88aff);
+
+  /* ─── Borders ─── */
+  --border: rgba(255, 255, 255, 0.06);
+  --border-subtle: rgba(255, 255, 255, 0.04);
+  --border-active: rgba(255, 255, 255, 0.12);
+
+  /* ─── Semantic Colors ─── */
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.1);
+
+  /* ─── Row States ─── */
+  --row-hover: rgba(255, 255, 255, 0.03);
+  --row-selected: rgba(59, 130, 246, 0.08);
+  --row-stripe: rgba(255, 255, 255, 0.012);
+
+  /* ─── Typography ─── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* ─── Effects ─── */
+  --glass-blur: blur(30px);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 24px rgba(79, 141, 247, 0.18), 0 0 48px rgba(124, 110, 245, 0.08);
+
+  /* ─── Sizing ─── */
+  --sidebar-width: 280px;
+  --titlebar-height: 56px;
+  --toolbar-height: 48px;
+  --row-height: 42px;
+}
+
+/* ─── Reset & Base ─── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-app);
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  background-image: radial-gradient(circle at 20% 20%, rgba(79, 141, 247, 0.03) 0%, transparent 50%),
+                    radial-gradient(circle at 80% 80%, rgba(176, 106, 240, 0.02) 0%, transparent 50%);
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ─── Scrollbars ─── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ─── Element Resets ─── */
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  outline: none;
+}
+
+input {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  outline: none;
+}
+
+/* ─── Selection ─── */
+::selection {
+  background: rgba(59, 130, 246, 0.3);
+  color: white;
+}
