@@ -653,7 +653,7 @@ function App() {
           {activeNode ? activeNode.name : 'DiskVision'}
         </div>
 
-        <DiskBar diskSpace={rootDirectory ? diskSpace : null} />
+        <DiskBar diskSpace={rootDirectory ? diskSpace : null} rootDirectory={rootDirectory} />
 
         <Header
           breadcrumbs={breadcrumbs}

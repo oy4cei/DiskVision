@@ -27,10 +27,8 @@ const Sidebar = React.memo(function Sidebar({
     return 'green';
   };
 
-  const isRootDevice = rootDirectory && (rootDirectory.id === '/' || !rootDirectory.id.includes('/'));
-  const deviceSize = (diskSpace && diskSpace.used && isRootDevice) 
-    ? diskSpace.used 
-    : (rootDirectory?.size || 0);
+  const isRootDevice = rootDirectory && (rootDirectory.id === '/' || rootDirectory.id === '/System/Volumes/Data');
+  const deviceSize = rootDirectory ? rootDirectory.size : (diskSpace?.used || 0);
 
   return (
     <div className="sidebar">

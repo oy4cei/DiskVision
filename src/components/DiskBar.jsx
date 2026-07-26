@@ -2,10 +2,14 @@ import React from 'react';
 import { HardDrive } from '../Icons';
 import { formatSize } from '../utils';
 
-const DiskBar = React.memo(function DiskBar({ diskSpace }) {
+const DiskBar = React.memo(function DiskBar({ diskSpace, rootDirectory }) {
   if (!diskSpace) return null;
 
+  const isRootScan = rootDirectory && (rootDirectory.id === '/' || rootDirectory.id === '/System/Volumes/Data');
+  const scannedSize = rootDirectory?.size || 0;
+  
   const usedPercent = Math.min((diskSpace.used / diskSpace.total) * 100, 100);
+  const scannedPercent = Math.min((scannedSize / diskSpace.total) * 100, 100);
   const freePercent = 100 - usedPercent;
   
   // Color based on usage level
@@ -22,8 +26,13 @@ const DiskBar = React.memo(function DiskBar({ diskSpace }) {
           <span>{formatSize(diskSpace.total)} SSD</span>
         </div>
         <div className="disk-bar-detail">
+          {!isRootScan && rootDirectory && (
+            <span style={{ color: '#60a5fa', fontWeight: 600, marginRight: '6px' }}>
+              {formatSize(scannedSize)} in {rootDirectory.name} ·
+            </span>
+          )}
           <span style={{ color: usageColor, fontWeight: 600 }}>{formatSize(diskSpace.used)}</span>
-          {' used · '}
+          {' SSD used · '}
           <span style={{ color: '#30d870', fontWeight: 600 }}>{formatSize(diskSpace.free)}</span>
           {' free'}
         </div>
@@ -44,7 +53,9 @@ const DiskBar = React.memo(function DiskBar({ diskSpace }) {
         fontFamily: 'var(--font-mono)',
         color: 'var(--text-muted)',
       }}>
-        <span>{usedPercent.toFixed(1)}% used</span>
+        <span>
+          {!isRootScan && rootDirectory ? `${formatSize(scannedSize)} (${scannedPercent.toFixed(1)}% of SSD)` : `${usedPercent.toFixed(1)}% used`}
+        </span>
         <span>{freePercent.toFixed(1)}% free</span>
       </div>
     </div>
