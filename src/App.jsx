@@ -256,21 +256,7 @@ function App() {
   };
 
   const handleScanEntireDisk = async () => {
-    try {
-      const selectedPath = await open({
-        directory: true,
-        multiple: false,
-        defaultPath: '/',
-        title: 'Select Disk or Folder to Scan'
-      });
-      if (!selectedPath) return;
-      await runScan(selectedPath);
-    } catch (err) {
-      console.error("Native dialog error, falling back:", err);
-      const selectedPath = await open({ directory: true, multiple: false });
-      if (!selectedPath) return;
-      await runScan(selectedPath);
-    }
+    await runScan('/');
   };
 
   const handleFallbackScan = (e) => {
