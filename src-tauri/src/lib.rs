@@ -43,6 +43,29 @@ fn open_in_finder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_full_disk_access_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+            .spawn();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn check_full_disk_access() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        fs::read_dir("/Library/Application Support/com.apple.TCC").is_ok()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::mpsc;
@@ -220,8 +243,7 @@ fn build_skip_set(scan_root: &str) -> HashSet<String> {
     }
 
     // ── TCC-sensitive system database directories (prevent macOS popup spam) ──
-    if let Some(user_dirs) = dirs::home_dir() {
-        let home = user_dirs.to_string_lossy();
+    if let Ok(home) = std::env::var("HOME") {
         skip.insert(format!("{}/Library/Mail", home));
         skip.insert(format!("{}/Library/Messages", home));
         skip.insert(format!("{}/Library/Calendars", home));
@@ -537,7 +559,15 @@ pub fn run() {
     })
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_dialog::init())
-    .invoke_handler(tauri::generate_handler![get_disk_space, open_in_finder, scan_directory, get_directory_node, delete_node])
+    .invoke_handler(tauri::generate_handler![
+        get_disk_space,
+        open_in_finder,
+        scan_directory,
+        get_directory_node,
+        delete_node,
+        open_full_disk_access_settings,
+        check_full_disk_access
+    ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

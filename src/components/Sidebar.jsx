@@ -55,6 +55,14 @@ const Sidebar = React.memo(function Sidebar({
         >
           Select Folder
         </button>
+        <button 
+          className="sidebar-scan-btn-secondary" 
+          style={{ marginTop: '6px', fontSize: '11px', opacity: 0.85, gap: '4px' }}
+          onClick={() => invoke('open_full_disk_access_settings')}
+          title="Open macOS Settings to grant Full Disk Access"
+        >
+          ⚙ Full Disk Access
+        </button>
       </div>
 
       {rootDirectory && (

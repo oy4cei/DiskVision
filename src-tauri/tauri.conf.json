@@ -30,9 +30,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Utilities",
     "macOS": {
       "entitlements": "Entitlements.plist",
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "12.0"
     },
     "icon": [
       "icons/32x32.png",
