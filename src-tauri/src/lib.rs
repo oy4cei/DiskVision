@@ -226,11 +226,8 @@ fn build_skip_set(scan_root: &str) -> HashSet<String> {
         skip.insert("/dev".to_string());
         skip.insert("/.vol".to_string());
         
-        // ── /Volumes can contain recursive mounts of the boot disk ──
-        // We'll handle /Volumes specially: skip entries that point
-        // back to the root filesystem
-        skip.insert("/Volumes/Macintosh HD".to_string());
-        skip.insert("/Volumes/Macintosh HD - Data".to_string());
+        // ── /Volumes can contain recursive mounts of the boot disk or mounted DMGs/external drives ──
+        skip.insert("/Volumes".to_string());
         
         // ── Swap / VM files ──
         skip.insert("/private/var/vm".to_string());
@@ -242,17 +239,20 @@ fn build_skip_set(scan_root: &str) -> HashSet<String> {
         skip.insert("/.fseventsd".to_string());
     }
 
-    // ── TCC-sensitive system database directories (prevent macOS popup spam) ──
-    if let Ok(home) = std::env::var("HOME") {
-        skip.insert(format!("{}/Library/Mail", home));
-        skip.insert(format!("{}/Library/Messages", home));
-        skip.insert(format!("{}/Library/Calendars", home));
-        skip.insert(format!("{}/Library/Reminders", home));
-        skip.insert(format!("{}/Library/Safari", home));
-        skip.insert(format!("{}/Library/Application Support/AddressBook", home));
-        skip.insert(format!("{}/Library/IdentityServices", home));
-        skip.insert(format!("{}/Library/PersonalizationPortrait", home));
-        skip.insert(format!("{}/Library/Suggestions", home));
+    // ── TCC-sensitive directories: only skip if Full Disk Access is NOT granted ──
+    let has_fda = std::fs::read_dir("/Library/Application Support/com.apple.TCC").is_ok();
+    if !has_fda {
+        if let Ok(home) = std::env::var("HOME") {
+            skip.insert(format!("{}/Library/Mail", home));
+            skip.insert(format!("{}/Library/Messages", home));
+            skip.insert(format!("{}/Library/Calendars", home));
+            skip.insert(format!("{}/Library/Reminders", home));
+            skip.insert(format!("{}/Library/Safari", home));
+            skip.insert(format!("{}/Library/Application Support/AddressBook", home));
+            skip.insert(format!("{}/Library/IdentityServices", home));
+            skip.insert(format!("{}/Library/PersonalizationPortrait", home));
+            skip.insert(format!("{}/Library/Suggestions", home));
+        }
     }
     
     skip
@@ -308,10 +308,14 @@ async fn scan_directory(
         #[cfg(unix)]
         let root_dev = fs::metadata(&scan_root).map(|m| m.dev()).unwrap_or(0);
         
+        // Track seen inodes to deduplicate hard links (files with nlink > 1)
+        let seen_inodes = std::sync::Mutex::new(HashSet::<u64>::new());
+        
         fn scan_recursive(
             dir_path: &std::path::Path,
             tx: &mpsc::Sender<(u64, u64, u64, String)>,
             skip_set: &HashSet<String>,
+            seen_inodes: &std::sync::Mutex<HashSet<u64>>,
             #[cfg(unix)] root_dev: u64,
         ) -> std::io::Result<FileNode> {
             let name = dir_path.file_name()
@@ -379,7 +383,7 @@ async fn scan_directory(
                     }
                     
                     match scan_recursive(
-                        &path, tx, skip_set,
+                        &path, tx, skip_set, seen_inodes,
                         #[cfg(unix)] root_dev,
                     ) {
                         Ok(sub_node) => Some(sub_node),
@@ -392,11 +396,29 @@ async fn scan_directory(
                     #[cfg(not(unix))]
                     let physical_size = logical_size;
 
-                    let size = if logical_size > physical_size * 2 && logical_size - physical_size > 10 * 1024 * 1024 {
-                        physical_size
+                    // Use the smaller of logical vs physical size to avoid overcounting:
+                    // - APFS compressed files: physical < logical → use physical
+                    // - Small files with block padding: logical < physical → use logical
+                    // - APFS clones share physical blocks but report full st_blocks per clone
+                    let mut size = if physical_size > 0 {
+                        std::cmp::min(logical_size, physical_size)
                     } else {
                         logical_size
                     };
+
+                    // Deduplicate hard links: if nlink > 1, only count the first occurrence
+                    #[cfg(unix)]
+                    {
+                        let nlink = metadata.nlink();
+                        if nlink > 1 {
+                            let ino = metadata.ino();
+                            let mut seen = seen_inodes.lock().unwrap();
+                            if !seen.insert(ino) {
+                                // Already counted this inode via another hard link
+                                size = 0;
+                            }
+                        }
+                    }
                     
                     let cat = get_file_category(&entry_name, &path_str);
                     let mut category_sizes = HashMap::new();
@@ -452,7 +474,7 @@ async fn scan_directory(
 
         let path_obj = std::path::Path::new(&path);
         scan_recursive(
-            path_obj, &tx, &skip_set,
+            path_obj, &tx, &skip_set, &seen_inodes,
             #[cfg(unix)] root_dev,
         ).map_err(|e| e.to_string())
     }).await.map_err(|e| e.to_string())??;
@@ -473,6 +495,9 @@ fn get_directory_node(
     path: String,
     depth: u32,
 ) -> Result<FileNode, String> {
+    if path == "virtual:trash" || path.ends_with("/.Trash") || path.ends_with("/.Trashes") {
+        return get_trash_node(state);
+    }
     let guard = state.scan_result.lock().map_err(|e| e.to_string())?;
     let root = guard.as_ref().ok_or_else(|| "No scan data available".to_string())?;
     
@@ -480,6 +505,110 @@ fn get_directory_node(
         .ok_or_else(|| format!("Directory not found: {}", path))?;
     
     Ok(clone_to_depth(found, 0, depth))
+}
+
+#[tauri::command]
+fn get_trash_node(_state: tauri::State<'_, AppState>) -> Result<FileNode, String> {
+    // Scan ~/.Trash directly (no AppleScript/Finder needed since app-sandbox is off
+    // and Full Disk Access is granted).
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+
+    let trash_path = match std::env::var("HOME") {
+        Ok(home) => format!("{}/.Trash", home),
+        Err(_) => return Err("Cannot determine HOME directory".to_string()),
+    };
+
+    let trash_dir = std::path::Path::new(&trash_path);
+    let mut children = Vec::new();
+    let mut total_size: u64 = 0;
+    let mut total_files: u64 = 0;
+    let mut total_folders: u64 = 0;
+    let mut category_sizes: HashMap<String, u64> = HashMap::new();
+    let mut category_files_count: HashMap<String, u64> = HashMap::new();
+
+    if let Ok(entries) = fs::read_dir(trash_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') { continue; }
+
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            let (kind, size) = if metadata.is_dir() {
+                // Calculate directory size recursively
+                let dir_size = calc_dir_size(&entry.path());
+                ("directory", dir_size)
+            } else {
+                #[cfg(unix)]
+                let sz = { let ps = metadata.blocks() * 512; if ps > 0 { ps } else { metadata.len() } };
+                #[cfg(not(unix))]
+                let sz = metadata.len();
+                ("file", sz)
+            };
+
+            total_size += size;
+            if kind == "directory" {
+                total_folders += 1;
+            } else {
+                total_files += 1;
+            }
+
+            let cat = get_file_category(&name, &entry.path().to_string_lossy());
+            *category_sizes.entry(cat.clone()).or_insert(0) += size;
+            *category_files_count.entry(cat).or_insert(0) += 1;
+
+            children.push(FileNode {
+                id: format!("trash:{}", name),
+                name,
+                kind: kind.to_string(),
+                size,
+                files_count: if kind == "file" { 1 } else { 0 },
+                folders_count: if kind == "directory" { 1 } else { 0 },
+                children: if kind == "directory" { Some(Vec::new()) } else { None },
+                category_sizes: HashMap::new(),
+                category_files_count: HashMap::new(),
+            });
+        }
+    }
+
+    children.sort_by(|a, b| b.size.cmp(&a.size));
+
+    Ok(FileNode {
+        id: "virtual:trash".to_string(),
+        name: "Trash".to_string(),
+        kind: "directory".to_string(),
+        size: total_size,
+        files_count: total_files,
+        folders_count: total_folders,
+        children: Some(children),
+        category_sizes,
+        category_files_count,
+    })
+}
+
+/// Recursively calculate the physical size of a directory.
+fn calc_dir_size(path: &std::path::Path) -> u64 {
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    let mut total: u64 = 0;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            if let Ok(m) = entry.metadata() {
+                if m.is_dir() {
+                    total += calc_dir_size(&entry.path());
+                } else {
+                    #[cfg(unix)]
+                    { let ps = m.blocks() * 512; total += if ps > 0 { ps } else { m.len() }; }
+                    #[cfg(not(unix))]
+                    { total += m.len(); }
+                }
+            }
+        }
+    }
+    total
 }
 
 fn delete_node_recursive(node: &mut FileNode, target_id: &str) -> Option<u64> {
@@ -566,7 +695,8 @@ pub fn run() {
         get_directory_node,
         delete_node,
         open_full_disk_access_settings,
-        check_full_disk_access
+        check_full_disk_access,
+        get_trash_node
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

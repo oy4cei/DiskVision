@@ -131,18 +131,25 @@ function App() {
   const [diskSpace, setDiskSpace] = useState({ total: 500 * 1e9, used: 250 * 1e9, free: 250 * 1e9 });
   const [currentView, setView] = useState(() => localStorage.getItem('diskvision_view') || 'table');
   const [showFdaModal, setShowFdaModal] = useState(false);
+  const [extraTrashNode, setExtraTrashNode] = useState(null);
 
   const fileInputRef = useRef(null);
   const abortSignalRef = useRef(null);
 
-  // Check Full Disk Access on launch & auto-open System Settings if missing
+  // Check Full Disk Access on launch — skip if already granted or previously dismissed
   useEffect(() => {
     async function checkFdaOnLaunch() {
       try {
         const hasFda = await invoke('check_full_disk_access');
-        if (!hasFda) {
+        if (hasFda) {
+          // FDA is granted — clear any old dismissal flag
+          localStorage.removeItem('diskvision_fda_dismissed');
+          return;
+        }
+        // Only show modal if user hasn't dismissed it before
+        const dismissed = localStorage.getItem('diskvision_fda_dismissed');
+        if (!dismissed) {
           setShowFdaModal(true);
-          await invoke('open_full_disk_access_settings');
         }
       } catch (err) {
         console.error("FDA auto-check failed:", err);
@@ -193,7 +200,7 @@ function App() {
     return () => { active = false; };
   }, [currentDirId, isFallbackScan]);
 
-  // Fetch disk space from Rust backend
+  // Fetch disk space and Trash node from Rust backend
   useEffect(() => {
     const fetchDiskSpace = async () => {
       const path = rootDirectory ? rootDirectory.id : '/';
@@ -204,7 +211,19 @@ function App() {
         console.error("Failed to fetch disk space:", err);
       }
     };
+    const fetchTrash = async () => {
+      try {
+        const trash = await invoke('get_trash_node');
+        console.log('[Trash] Got trash node:', trash?.size, 'bytes');
+        if (trash) {
+          setExtraTrashNode(trash);
+        }
+      } catch (err) {
+        console.error('[Trash] Failed to get trash node:', err);
+      }
+    };
     fetchDiskSpace();
+    fetchTrash();
   }, [rootDirectory]);
 
   // ─── Scan Actions ───
@@ -230,6 +249,21 @@ function App() {
       unlisten();
 
       if (rootNode) {
+        // When scanning root '/', cap total size at OS-reported used space.
+        // APFS clones share physical blocks but report full st_blocks per inode,
+        // so per-file sums can exceed actual disk usage by ~10-15 GB.
+        if (scanPath === '/') {
+          try {
+            const space = await invoke('get_disk_space', { path: '/' });
+            if (space && space.used > 0 && rootNode.size > space.used) {
+              rootNode.size = space.used;
+            }
+            setDiskSpace(space);
+          } catch (e) {
+            console.warn('Could not fetch disk space for cap:', e);
+          }
+        }
+
         setRootDirectory(rootNode);
         setActiveNode(rootNode);
         setCurrentDirId(rootNode.id);
@@ -240,6 +274,20 @@ function App() {
           totalSize: rootNode.size || 0,
           currentPath: rootNode.name || scanPath
         });
+
+        // Query backend for Trash node anywhere in the scanned tree
+        try {
+          const trash = await invoke('get_trash_node');
+          console.log('[Trash] Got trash node:', trash?.size, 'bytes, children:', trash?.children?.length);
+          if (trash) {
+            setExtraTrashNode(trash);
+          } else {
+            setExtraTrashNode(null);
+          }
+        } catch (e) {
+          console.error('[Trash] Failed to get trash node:', e);
+          setExtraTrashNode(null);
+        }
       }
       setIsScanning(false);
     } catch (err) {
@@ -256,7 +304,18 @@ function App() {
   };
 
   const handleScanEntireDisk = async () => {
-    await runScan('/');
+    try {
+      const selectedPath = await open({
+        directory: true,
+        multiple: false,
+        title: 'Select Disk or Folder to Scan'
+      });
+      if (selectedPath) {
+        await runScan(selectedPath);
+      }
+    } catch (e) {
+      await runScan('/');
+    }
   };
 
   const handleFallbackScan = (e) => {
@@ -465,8 +524,26 @@ function App() {
       return rows;
     }
 
-    return getRows(sortedTree, 0);
-  }, [sortedTree, expandedPaths, searchQuery, selectedCategory]);
+    const rows = getRows(sortedTree, 0);
+
+    // Append system overhead row if viewing root directory and there is unaccounted OS storage
+    if (rootDirectory && activeNode && activeNode.id === rootDirectory.id && diskSpace && diskSpace.used > rootDirectory.size) {
+      const systemOverhead = diskSpace.used - rootDirectory.size;
+      if (systemOverhead > 1e9) {
+        rows.push({
+          id: 'virtual:system_overhead',
+          name: 'System Data & APFS Snapshots (local Time Machine snapshots, swap /System/Volumes/VM, macOS protection)',
+          kind: 'system_info',
+          size: systemOverhead,
+          filesCount: 0,
+          foldersCount: 0,
+          depth: 0
+        });
+      }
+    }
+
+    return rows;
+  }, [sortedTree, expandedPaths, searchQuery, selectedCategory, rootDirectory, activeNode, diskSpace]);
 
   // Optimized category stats retrieval using pre-calculated map properties (O(1) in JS)
   const categoryStats = useMemo(() => {
@@ -485,11 +562,23 @@ function App() {
       .sort((a, b) => b.size - a.size);
   }, [unfilteredActiveNode]);
 
-  // Top-level folders for sidebar
+  // Top-level folders for sidebar (+ Trash from system/AppleScript)
   const sidebarFoldersList = useMemo(() => {
     if (!rootDirectory || !rootDirectory.children) return [];
-    return rootDirectory.children.filter(c => c.kind === 'directory');
-  }, [rootDirectory]);
+    
+    // Filter out any scan-tree Trash nodes (which have incomplete metadata due to TCC)
+    const topDirs = rootDirectory.children.filter(
+      c => c.kind === 'directory' && c.name !== '.Trash' && c.name !== '.Trashes' && c.name !== 'Trash'
+    );
+    
+    const result = [...topDirs];
+    if (extraTrashNode) {
+      result.push(extraTrashNode);
+    }
+    
+    // Sort all folders including Trash by size descending
+    return result.sort((a, b) => b.size - a.size);
+  }, [rootDirectory, extraTrashNode]);
 
   // ─── Event Handlers ───
 
@@ -589,6 +678,17 @@ function App() {
     const rootId = rootDirectory.id;
     if (activeNode.id === rootId) return [{ name: rootDirectory.name, id: rootId }];
 
+    if (activeNode.id === "virtual:trash") {
+      return [{ name: rootDirectory.name, id: rootId }, { name: "Trash", id: "virtual:trash" }];
+    }
+    if (activeNode.id.startsWith("trash:")) {
+      return [
+        { name: rootDirectory.name, id: rootId },
+        { name: "Trash", id: "virtual:trash" },
+        { name: activeNode.name, id: activeNode.id }
+      ];
+    }
+
     const relativePath = activeNode.id.replace(rootId + '/', '');
     const segments = relativePath.split('/');
     const crumbs = [{ name: rootDirectory.name, id: rootId }];
@@ -635,7 +735,7 @@ function App() {
 
       <div className="main-content">
         {/* Title Bar */}
-        <div className="window-titlebar">
+        <div className="window-titlebar" data-tauri-drag-region>
           {activeNode ? activeNode.name : 'DiskVision'}
         </div>
 
@@ -658,7 +758,35 @@ function App() {
         {/* Tree Table or Empty State */}
         {rootDirectory ? (
           <>
-             {currentView === 'table' && (
+            {activeNode && (activeNode.name === '.Trash' || activeNode.name === '.Trashes') && visibleRows.length === 0 && (
+              <div style={{
+                margin: '32px auto',
+                padding: '28px',
+                maxWidth: '460px',
+                background: 'linear-gradient(145deg, rgba(32,32,40,0.95), rgba(24,24,30,0.98))',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '16px',
+                textAlign: 'center',
+                boxShadow: '0 12px 32px rgba(0,0,0,0.4)'
+              }}>
+                <div style={{ fontSize: '36px', marginBottom: '12px' }}>🔒</div>
+                <h4 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, margin: '0 0 8px' }}>
+                  Содержимое Корзины заблокировано macOS
+                </h4>
+                <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.55)', lineHeight: 1.6, margin: '0 0 20px' }}>
+                  Система безопасности macOS защищает папки Корзины.
+                  Чтобы сканировать и просматривать удаленные файлы, включите тумблер <b>DiskVision</b> в открывшемся окне настроек.
+                </p>
+                <button 
+                  className="sidebar-scan-btn"
+                  style={{ width: '100%', padding: '11px 16px', fontSize: '13px', justifyContent: 'center' }}
+                  onClick={() => invoke('open_full_disk_access_settings')}
+                >
+                  ⚙ Включить Полный доступ к диску
+                </button>
+              </div>
+            )}
+            {currentView === 'table' && (
               <TreeTable
                 visibleRows={visibleRows}
                 activeNode={filteredActiveNode}
@@ -751,51 +879,91 @@ function App() {
 
       {/* Full Disk Access Modal */}
       {showFdaModal && (
-        <div className="modal-overlay" style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.65)',
-          backdropFilter: 'blur(8px)',
+        <div style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0, 0, 0, 0.6)',
+          backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
           zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '20px'
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '24px',
+          animation: 'fadeIn 0.25s ease-out'
         }}>
-          <div className="modal-card" style={{
-            background: 'var(--bg-card, #1e1e24)',
-            border: '1px solid var(--border-color, rgba(255, 255, 255, 0.12))',
-            borderRadius: '16px',
-            padding: '28px 24px',
-            maxWidth: '460px',
-            width: '100%',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+          <div style={{
+            background: 'linear-gradient(145deg, rgba(32,32,40,0.97), rgba(24,24,30,0.99))',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: '20px',
+            padding: '32px 28px 28px',
+            maxWidth: '420px', width: '100%',
+            boxShadow: '0 24px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04)',
             textAlign: 'center'
           }}>
-            <div style={{ fontSize: '36px', marginBottom: '12px' }}>🔒</div>
-            <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-main, #ffffff)', marginBottom: '8px' }}>
-              Требуется Полный доступ к диску
-            </h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted, #a0a0ab)', lineHeight: 1.5, marginBottom: '20px' }}>
-              Чтобы DiskVision мог сканировать диск за один раз <b>без всплывающих окон macOS</b>, включите тумблер напротив <b>DiskVision</b> в открывшемся окне настроек.
+            {/* Icon */}
+            <div style={{
+              width: '56px', height: '56px', margin: '0 auto 16px',
+              borderRadius: '14px',
+              background: 'linear-gradient(135deg, rgba(99,102,241,0.2), rgba(168,85,247,0.15))',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '28px'
+            }}>🛡️</div>
+
+            {/* Title */}
+            <h3 style={{
+              fontSize: '17px', fontWeight: 600,
+              color: '#fff', margin: '0 0 10px', letterSpacing: '-0.01em'
+            }}>Full Disk Access</h3>
+
+            {/* Description */}
+            <p style={{
+              fontSize: '13px', color: 'rgba(255,255,255,0.55)',
+              lineHeight: 1.6, margin: '0 0 8px'
+            }}>
+              DiskVision analyzes storage usage on your Mac.
+              Without Full Disk Access, macOS will show
+              a separate permission dialog for <b style={{ color: 'rgba(255,255,255,0.75)' }}>each protected folder</b> (Desktop, Documents, Photos…).
             </p>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-              <button 
-                className="sidebar-scan-btn"
-                style={{ flex: 1, padding: '10px 16px', fontSize: '13px' }}
-                onClick={() => invoke('open_full_disk_access_settings')}
+            <p style={{
+              fontSize: '12px', color: 'rgba(255,255,255,0.4)',
+              lineHeight: 1.5, margin: '0 0 22px'
+            }}>
+              Grant access once to scan your entire disk without interruptions.
+              DiskVision works 100% offline — no data leaves your Mac.
+            </p>
+
+            {/* Buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button
+                style={{
+                  width: '100%', padding: '12px 20px',
+                  borderRadius: '12px', border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                  color: '#fff', fontSize: '14px', fontWeight: 600,
+                  transition: 'opacity 0.15s, transform 0.15s'
+                }}
+                onMouseEnter={e => { e.target.style.opacity = '0.9'; e.target.style.transform = 'scale(0.98)'; }}
+                onMouseLeave={e => { e.target.style.opacity = '1'; e.target.style.transform = 'scale(1)'; }}
+                onClick={() => {
+                  invoke('open_full_disk_access_settings');
+                  setShowFdaModal(false);
+                }}
               >
-                ⚙ Открыть Настройки macOS
+                Open System Settings
               </button>
-              <button 
-                className="sidebar-scan-btn-secondary"
-                style={{ padding: '10px 16px', fontSize: '13px' }}
-                onClick={() => setShowFdaModal(false)}
+              <button
+                style={{
+                  width: '100%', padding: '10px 20px',
+                  borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)',
+                  cursor: 'pointer', background: 'transparent',
+                  color: 'rgba(255,255,255,0.45)', fontSize: '13px', fontWeight: 500,
+                  transition: 'color 0.15s'
+                }}
+                onMouseEnter={e => e.target.style.color = 'rgba(255,255,255,0.7)'}
+                onMouseLeave={e => e.target.style.color = 'rgba(255,255,255,0.45)'}
+                onClick={() => {
+                  localStorage.setItem('diskvision_fda_dismissed', 'true');
+                  setShowFdaModal(false);
+                }}
               >
-                Позже
+                Skip for now
               </button>
             </div>
           </div>

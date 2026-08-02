@@ -28,13 +28,14 @@ const Sidebar = React.memo(function Sidebar({
   };
 
   const isRootDevice = rootDirectory && (rootDirectory.id === '/' || rootDirectory.id === '/System/Volumes/Data');
-  const deviceSize = rootDirectory ? rootDirectory.size : (diskSpace?.used || 0);
+  const deviceSize = (diskSpace && diskSpace.used) ? diskSpace.used : (rootDirectory?.size || 0);
 
   return (
     <div className="sidebar">
       {/* Drag region for window title bar area */}
-      <div className="sidebar-drag-region">
+      <div className="sidebar-drag-region" data-tauri-drag-region>
         <span className="sidebar-app-name">DiskVision</span>
+        <span className="sidebar-version">1.1</span>
       </div>
 
       {/* Scan buttons */}
@@ -99,6 +100,7 @@ const Sidebar = React.memo(function Sidebar({
               const percent = rootDirectory.size > 0 
                 ? ((folder.size / rootDirectory.size) * 100).toFixed(0) 
                 : 0;
+              const isTrash = folder.name === '.Trash' || folder.name === '.Trashes' || folder.name === 'Trash';
               return (
                 <div 
                   className={`sidebar-nav-item ${isActive ? 'active' : ''}`}
@@ -106,8 +108,11 @@ const Sidebar = React.memo(function Sidebar({
                   onClick={() => enterDirectory(folder.id)}
                 >
                   <div className="sidebar-nav-left">
-                    <Folder size={14} color="#60a5fa" fill="#60a5fa" fillOpacity={0.12} />
-                    <span>{folder.name}</span>
+                    {isTrash 
+                      ? <span style={{ fontSize: '14px', width: '14px', textAlign: 'center' }}>🗑</span>
+                      : <Folder size={14} color="#60a5fa" fill="#60a5fa" fillOpacity={0.12} />
+                    }
+                    <span>{isTrash ? 'Trash' : folder.name}</span>
                   </div>
                   <div className="sidebar-nav-right">
                     <span className={`badge ${getBadgeClass(folder.size)}`}>

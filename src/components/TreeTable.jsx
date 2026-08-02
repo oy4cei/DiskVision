@@ -59,9 +59,6 @@ const TreeTable = React.memo(function TreeTable({
         <div className="th col-size" onClick={() => requestSort('size')}>
           Size{getSortIndicator('size')}
         </div>
-        <div className="th col-allocated" onClick={() => requestSort('size')}>
-          Allocated{getSortIndicator('size')}
-        </div>
         <div className="th col-files" onClick={() => requestSort('filesCount')}>
           Files{getSortIndicator('filesCount')}
         </div>
@@ -85,6 +82,7 @@ const TreeTable = React.memo(function TreeTable({
             const row = visibleRows[virtualRow.index];
             const isDir = row.kind === 'directory';
             const isSkipped = row.kind === 'skipped';
+            const isSystemInfo = row.kind === 'system_info';
             const percentOfParent = activeNode && activeNode.size > 0 
               ? ((row.size / activeNode.size) * 100) 
               : 0;
@@ -94,6 +92,7 @@ const TreeTable = React.memo(function TreeTable({
             let rowClass = 'tree-table-row-grid';
             if (isRowSelected) rowClass += ' selected';
             if (isSkipped) rowClass += ' skipped-files-row';
+            if (isSystemInfo) rowClass += ' system-info-row';
 
             const category = getFileCategory(row.name, isDir, row.id);
             const color = getCategoryColor(category);
@@ -110,10 +109,12 @@ const TreeTable = React.memo(function TreeTable({
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`
                 }}
-                onClick={(e) => handleRowClick(row, e)}
-                onDoubleClick={(e) => handleRowDoubleClick(row, e)}
+                onClick={(e) => (isSkipped || isSystemInfo) ? null : handleRowClick(row, e)}
+                onDoubleClick={(e) => (isSkipped || isSystemInfo) ? null : handleRowDoubleClick(row, e)}
                 title={isDir 
                   ? 'Click to expand · Double-click to open in Finder' 
+                  : isSystemInfo
+                  ? 'APFS local snapshots, swap files (/System/Volumes/VM), and macOS protected system data'
                   : 'Double-click to open in Finder'}
               >
                 {/* Name Column */}
@@ -131,21 +132,20 @@ const TreeTable = React.memo(function TreeTable({
                       <Folder size={14} color="#60a5fa" fill="#60a5fa" fillOpacity={0.12} />
                     ) : isSkipped ? (
                       <Info size={14} color="var(--text-muted)" />
+                    ) : isSystemInfo ? (
+                      <Info size={14} color="#f59e0b" />
                     ) : (
                       <File size={14} color={color} />
                     )}
                   </span>
 
-                  <span className={`name-text ${isDir ? 'dir' : ''}`}>
+                  <span className={`name-text ${isDir ? 'dir' : ''} ${isSystemInfo ? 'system-info' : ''}`}>
                     {row.name}
                   </span>
                 </div>
                 
                 {/* Size */}
                 <div className="td col-size">{formatSize(row.size)}</div>
-                
-                {/* Allocated */}
-                <div className="td col-allocated">{formatSize(row.size)}</div>
                 
                 {/* Files */}
                 <div className="td col-files">
